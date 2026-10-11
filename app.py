@@ -10,7 +10,9 @@ Miljövariabler:
     CLIP_SECONDS                               valfritt, standard 60
 """
 import hmac
+import logging
 import os
+import sys
 import threading
 import time
 
@@ -20,7 +22,13 @@ from spotipy.cache_handler import MemoryCacheHandler
 from spotipy.exceptions import SpotifyException
 from spotipy.oauth2 import SpotifyOAuth
 
+logging.basicConfig(
+    level=logging.INFO, stream=sys.stdout, format="%(asctime)s %(message)s"
+)
+log = logging.getLogger("clip")
+
 SCOPE = "user-read-playback-state user-modify-playback-state"
+TIMEOUT = 10  # sekunder, så att inget anrop kan hänga för evigt
 PASSWORD = os.environ["APP_PASSWORD"]
 
 app = Flask(__name__)
@@ -32,7 +40,15 @@ state = {
     "seen": "Ingen kontroll gjord än (tryck Starta)",
     "user": "",
     "skipped": 0,
+    "stage": "startar",
+    "beat": "",
 }
+
+
+def set_seen(msg, log_it=True):
+    if log_it and state["seen"] != msg:
+        log.info(msg)
+    state["seen"] = msg
 
 
 def make_oauth():
@@ -53,6 +69,7 @@ def make_oauth():
         cache_handler=MemoryCacheHandler(token_info=token),
         open_browser=False,
         show_dialog=True,
+        requests_timeout=TIMEOUT,
     )
 
 
@@ -83,43 +100,59 @@ def devices_text(sp):
 
 
 def worker():
+    log.info("Bakgrundsjobbet startade")
     while True:
         time.sleep(1)
+        state["beat"] = time.strftime("%H:%M:%S")
         if not state["running"]:
+            state["stage"] = "vilar (inte startad)"
             continue
         try:
+            state["stage"] = "hämtar token"
             token = current_token()
             if not token:
-                state["seen"] = "Inte inloggad mot Spotify (koden saknas eller är ogiltig)"
+                set_seen("Inte inloggad mot Spotify (koden saknas eller är ogiltig)")
                 state["last"] = "Inte inloggad mot Spotify"
                 time.sleep(5)
                 continue
-            sp = spotipy.Spotify(auth=token["access_token"])
+            sp = spotipy.Spotify(
+                auth=token["access_token"], requests_timeout=TIMEOUT, retries=1
+            )
 
             if not state["user"]:
+                state["stage"] = "hämtar kontonamn"
                 try:
                     me = sp.current_user()
                     state["user"] = me.get("display_name") or me.get("id") or "okänt"
-                except Exception:
+                    log.info("Inloggad som %s", state["user"])
+                except Exception as e:
+                    log.info("Kunde inte läsa kontonamn: %s", e)
                     state["user"] = "okänt"
 
+            state["stage"] = "läser uppspelning"
             pb = sp.current_playback()
+            state["stage"] = "klar med kontroll"
             if not pb:
-                state["seen"] = "Spotify rapporterar ingen aktiv uppspelning. " + devices_text(sp)
+                set_seen(
+                    "Spotify rapporterar ingen aktiv uppspelning. " + devices_text(sp)
+                )
             elif not pb.get("item"):
-                state["seen"] = "Uppspelning finns men ingen låt hittades (reklam eller podd?)"
+                set_seen("Uppspelning finns men ingen låt hittades (reklam eller podd?)")
             elif not pb.get("is_playing"):
-                state["seen"] = f"Pausad: {pb['item']['name']}"
+                set_seen(f"Pausad: {pb['item']['name']}")
             else:
                 name = pb["item"]["name"]
                 progress = pb["progress_ms"] or 0
-                state["seen"] = (
-                    f"Spelar: {name} ({progress // 1000} s av {state['seconds']} s)"
+                set_seen(
+                    f"Spelar: {name} ({progress // 1000} s av {state['seconds']} s)",
+                    log_it=False,
                 )
                 if progress >= state["seconds"] * 1000:
+                    state["stage"] = "hoppar över"
                     sp.next_track()
                     state["skipped"] += 1
                     state["last"] = f"Hoppade över: {name}"
+                    log.info("Hoppade över: %s", name)
                     time.sleep(3)  # undvik dubbelhopp
         except SpotifyException as e:
             wait = 5
@@ -127,21 +160,35 @@ def worker():
                 wait = int(e.headers.get("Retry-After", 5)) + 1
             msg = f"Spotify-fel {e.http_status}: {str(e.msg)[:150]}"
             state["last"] = msg
-            state["seen"] = msg
+            set_seen(msg)
             time.sleep(wait)
         except Exception as e:
-            msg = f"Fel: {str(e)[:150]}"
+            msg = f"Fel: {type(e).__name__}: {str(e)[:150]}"
             state["last"] = msg
-            state["seen"] = msg
+            set_seen(msg)
             time.sleep(5)
 
 
-threading.Thread(target=worker, daemon=True).start()
+worker_thread = None
+_lock = threading.Lock()
+
+
+def ensure_worker():
+    """Starta bakgrundsjobbet, och starta om det om tråden skulle ha dött."""
+    global worker_thread
+    with _lock:
+        if worker_thread is None or not worker_thread.is_alive():
+            worker_thread = threading.Thread(target=worker, daemon=True)
+            worker_thread.start()
+
+
+ensure_worker()
 
 
 @app.route("/ping")
 def ping():
     # Utan lösenord, så en gratis övervakningstjänst kan hålla appen vaken
+    ensure_worker()
     return "ok"
 
 
@@ -154,6 +201,7 @@ def check_auth():
         return Response(
             "Logga in", 401, {"WWW-Authenticate": 'Basic realm="Spotify clip"'}
         )
+    ensure_worker()
     return None
 
 
@@ -174,7 +222,8 @@ PAGE = """<!doctype html>
  Status: <b id="run">...</b><br>Senaste: <span id="last">...</span><br>Hoppade över: <span id="n">0</span>
 </div>
 <div class="card small">
- Ser just nu: <span id="seen">...</span><br>Inloggad som: <span id="user">-</span>
+ Ser just nu: <span id="seen">...</span><br>Inloggad som: <span id="user">-</span><br>
+ Bakgrundsjobb: <span id="job">-</span>
 </div>
 <div class="card">
  <form method="post" action="/start">
@@ -190,7 +239,8 @@ async function upd(){try{const r=await (await fetch('/status')).json();
  run.textContent=r.running?'Igång ('+r.seconds+' s)':'Stoppad';
  last.textContent=r.last;n.textContent=r.skipped;
  document.getElementById('seen').textContent=r.seen;
- document.getElementById('user').textContent=r.user||'-';}catch(e){}}
+ document.getElementById('user').textContent=r.user||'-';
+ document.getElementById('job').textContent=r.stage+' (serverns tid '+(r.beat||'-')+')';}catch(e){}}
 upd();setInterval(upd,3000);
 </script></body></html>"""
 
@@ -212,12 +262,14 @@ def start():
     except ValueError:
         pass
     state["running"] = True
+    log.info("Startad, %s s per låt", state["seconds"])
     return redirect("/")
 
 
 @app.route("/stop", methods=["POST"])
 def stop():
     state["running"] = False
+    log.info("Stoppad")
     return redirect("/")
 
 

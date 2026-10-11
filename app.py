@@ -29,6 +29,8 @@ state = {
     "running": False,
     "seconds": int(os.getenv("CLIP_SECONDS", "60")),
     "last": "Ingen aktivitet än",
+    "seen": "Ingen kontroll gjord än (tryck Starta)",
+    "user": "",
     "skipped": 0,
 }
 
@@ -40,7 +42,7 @@ def make_oauth():
         # expires_at=0 gör att en ny access token hämtas direkt
         token = {
             "access_token": "",
-            "refresh_token": refresh,
+            "refresh_token": refresh.strip(),
             "expires_at": 0,
             "expires_in": 0,
             "token_type": "Bearer",
@@ -64,6 +66,22 @@ def current_token():
     return oauth.validate_token(cached)
 
 
+def devices_text(sp):
+    """Kort text om vilka Spotify-enheter som syns, för felsökning."""
+    try:
+        devs = sp.devices().get("devices", [])
+        if not devs:
+            return "Inga enheter syns. Öppna Spotify-appen och spela en låt."
+        return "Enheter: " + ", ".join(
+            f"{d.get('name')}{' (aktiv)' if d.get('is_active') else ' (inte aktiv)'}"
+            for d in devs
+        )
+    except SpotifyException as e:
+        return f"Kunde inte läsa enheter ({e.http_status})."
+    except Exception as e:
+        return f"Kunde inte läsa enheter: {e}"
+
+
 def worker():
     while True:
         time.sleep(1)
@@ -72,30 +90,49 @@ def worker():
         try:
             token = current_token()
             if not token:
+                state["seen"] = "Inte inloggad mot Spotify (koden saknas eller är ogiltig)"
                 state["last"] = "Inte inloggad mot Spotify"
                 time.sleep(5)
                 continue
             sp = spotipy.Spotify(auth=token["access_token"])
+
+            if not state["user"]:
+                try:
+                    me = sp.current_user()
+                    state["user"] = me.get("display_name") or me.get("id") or "okänt"
+                except Exception:
+                    state["user"] = "okänt"
+
             pb = sp.current_playback()
-            if (
-                pb
-                and pb.get("is_playing")
-                and pb.get("item")
-                and pb["progress_ms"] >= state["seconds"] * 1000
-            ):
+            if not pb:
+                state["seen"] = "Spotify rapporterar ingen aktiv uppspelning. " + devices_text(sp)
+            elif not pb.get("item"):
+                state["seen"] = "Uppspelning finns men ingen låt hittades (reklam eller podd?)"
+            elif not pb.get("is_playing"):
+                state["seen"] = f"Pausad: {pb['item']['name']}"
+            else:
                 name = pb["item"]["name"]
-                sp.next_track()
-                state["skipped"] += 1
-                state["last"] = f"Hoppade över: {name}"
-                time.sleep(3)  # undvik dubbelhopp
+                progress = pb["progress_ms"] or 0
+                state["seen"] = (
+                    f"Spelar: {name} ({progress // 1000} s av {state['seconds']} s)"
+                )
+                if progress >= state["seconds"] * 1000:
+                    sp.next_track()
+                    state["skipped"] += 1
+                    state["last"] = f"Hoppade över: {name}"
+                    time.sleep(3)  # undvik dubbelhopp
         except SpotifyException as e:
             wait = 5
             if e.http_status == 429 and e.headers:
                 wait = int(e.headers.get("Retry-After", 5)) + 1
-            state["last"] = f"Spotify-fel {e.http_status}, försöker igen"
+            msg = f"Spotify-fel {e.http_status}: {str(e.msg)[:150]}"
+            state["last"] = msg
+            state["seen"] = msg
             time.sleep(wait)
         except Exception as e:
-            state["last"] = f"Fel: {e}"
+            msg = f"Fel: {str(e)[:150]}"
+            state["last"] = msg
+            state["seen"] = msg
             time.sleep(5)
 
 
@@ -130,11 +167,14 @@ PAGE = """<!doctype html>
  h1{font-size:1.4rem} .card{background:#1e1e1e;border-radius:12px;padding:16px;margin:14px 0}
  button,input{font-size:1.1rem;padding:14px;border-radius:10px;border:0;width:100%;box-sizing:border-box;margin-top:8px}
  .go{background:#1db954;color:#000;font-weight:600} .stop{background:#e5484d;color:#fff;font-weight:600}
- .alt{background:#333;color:#eee} a{color:#1db954}
+ .alt{background:#333;color:#eee} a{color:#1db954} .small{font-size:.9rem;color:#bbb}
 </style></head><body>
 <h1>Spotify-klipp</h1>
 <div class="card">
  Status: <b id="run">...</b><br>Senaste: <span id="last">...</span><br>Hoppade över: <span id="n">0</span>
+</div>
+<div class="card small">
+ Ser just nu: <span id="seen">...</span><br>Inloggad som: <span id="user">-</span>
 </div>
 <div class="card">
  <form method="post" action="/start">
@@ -148,8 +188,10 @@ PAGE = """<!doctype html>
 <script>
 async function upd(){try{const r=await (await fetch('/status')).json();
  run.textContent=r.running?'Igång ('+r.seconds+' s)':'Stoppad';
- last.textContent=r.last;n.textContent=r.skipped;}catch(e){}}
-upd();setInterval(upd,10000);
+ last.textContent=r.last;n.textContent=r.skipped;
+ document.getElementById('seen').textContent=r.seen;
+ document.getElementById('user').textContent=r.user||'-';}catch(e){}}
+upd();setInterval(upd,3000);
 </script></body></html>"""
 
 
@@ -190,6 +232,7 @@ def callback():
     if not code:
         return "Inloggningen misslyckades", 400
     oauth.get_access_token(code, as_dict=False, check_cache=False)
+    state["user"] = ""  # läses om vid nästa kontroll
     refresh = oauth.cache_handler.get_cached_token()["refresh_token"]
     return (
         "<body style='font-family:system-ui;padding:20px'>"

@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: spotify-clip
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    # En enda process är viktigt: bakgrundstråden och inloggningen delar minne
+    startCommand: gunicorn app:app -w 1 --threads 4 -b 0.0.0.0:$PORT
+    envVars:
+      - key: SPOTIPY_CLIENT_ID
+        sync: false
+      - key: SPOTIPY_CLIENT_SECRET
+        sync: false
+      - key: SPOTIPY_REDIRECT_URI
+        sync: false
+      - key: APP_PASSWORD
+        sync: false

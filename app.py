@@ -384,24 +384,24 @@ PAGE = """<!doctype html>
 <link rel="icon" href="/logo.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <style>
- body{font-family:-apple-system,system-ui,sans-serif;max-width:420px;margin:0 auto;padding:20px;
+ body{font-family:-apple-system,system-ui,sans-serif;max-width:420px;margin:0 auto;padding:12px 16px;
       background:#121212;color:#eee}
- .hero{text-align:center;padding:14px 0 8px}
- .hero svg{width:88px;height:88px;filter:drop-shadow(0 8px 22px rgba(29,185,84,.35))}
- h1{font-size:2rem;margin:14px 0 0;letter-spacing:.3px;text-align:center}
- .card{background:#1e1e1e;border-radius:16px;padding:16px;margin:14px 0}
- label{display:block;text-align:center;color:#bbb}
- input{font-size:1.3rem;padding:14px;border-radius:14px;border:1px solid #3a3a3a;width:100%;
-       box-sizing:border-box;margin-top:8px;background:#2a2a2a;color:#fff;text-align:center}
- .row{display:flex;justify-content:center;gap:36px;margin-top:22px;margin-bottom:4px}
+ .hero{text-align:center;padding:2px 0 0}
+ .hero svg{width:56px;height:56px;filter:drop-shadow(0 4px 12px rgba(29,185,84,.35))}
+ h1{font-size:1.5rem;margin:6px 0 0;letter-spacing:.3px;text-align:center}
+ .card{background:#1e1e1e;border-radius:14px;padding:10px 14px;margin:8px 0}
+ label{display:block;text-align:center;color:#bbb;font-size:.9rem}
+ input{font-size:1.1rem;padding:8px;border-radius:12px;border:1px solid #3a3a3a;width:100%;
+       box-sizing:border-box;margin-top:6px;background:#2a2a2a;color:#fff;text-align:center}
+ .row{display:flex;justify-content:center;gap:32px;margin-top:10px;margin-bottom:0}
  .round{width:auto;margin:0;padding:0;border:0;background:none;display:flex;flex-direction:column;
-        align-items:center;gap:10px;color:#eee;font-size:.95rem;font-weight:600;cursor:pointer;
+        align-items:center;gap:5px;color:#eee;font-size:.85rem;font-weight:600;cursor:pointer;
         -webkit-tap-highlight-color:transparent}
- .round .circle{width:92px;height:92px;border-radius:50%;display:grid;place-items:center;
-        box-shadow:0 6px 18px rgba(0,0,0,.45);transition:transform .12s}
+ .round .circle{width:72px;height:72px;border-radius:50%;display:grid;place-items:center;
+        box-shadow:0 4px 12px rgba(0,0,0,.45);transition:transform .12s}
  .round:active .circle{transform:scale(.93)}
  .go .circle{background:#1db954;color:#06210f} .stop .circle{background:#e5484d;color:#fff}
- a{color:#1db954} .small{font-size:.9rem;color:#bbb}
+ a{color:#1db954} .small{font-size:.85rem;color:#bbb}
 </style></head><body>
 <header class="hero">{logo}<h1>Låtväxlarn</h1></header>
 <div class="card">
@@ -416,11 +416,11 @@ PAGE = """<!doctype html>
   <input id="secs" type="number" name="seconds" min="5" max="600" value="{seconds}" inputmode="numeric">
   <div class="row">
    <button class="round go" type="submit" formaction="/start" aria-label="Starta">
-    <span class="circle"><svg viewBox="0 0 24 24" width="40" height="40" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg></span>
+    <span class="circle"><svg viewBox="0 0 24 24" width="32" height="32" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg></span>
     <span>Starta</span>
    </button>
    <button class="round stop" type="submit" formaction="/stop" formnovalidate aria-label="Stoppa">
-    <span class="circle"><svg viewBox="0 0 24 24" width="36" height="36" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2.5" fill="currentColor"/></svg></span>
+    <span class="circle"><svg viewBox="0 0 24 24" width="29" height="29" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2.5" fill="currentColor"/></svg></span>
     <span>Stoppa</span>
    </button>
   </div>
